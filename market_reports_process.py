@@ -5,6 +5,7 @@ import requests
 from docxtpl import DocxTemplate
 from pptx import Presentation
 from pptx.util import Inches
+from drive_utils import upload_to_drive
 
 # Templates directory should contain the provided DOCX/PPTX templates
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
