@@ -5,6 +5,7 @@ import threading
 import re
 from flask import Flask, request, jsonify
 from market_reports_process import generate_market_reports
+from drive_utils import upload_to_drive
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
