@@ -12,8 +12,9 @@ TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 DOCX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.docx")
 PPTX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.pptx")
 
-# Reuse upload helper from market_gap_process or redefine here
-from market_gap_process import upload_to_drive
+# Remove the old import to avoid duplication; use drive_utils.upload_to_drive
+# from market_gap_process import upload_to_drive
+
 
 def download_chart(url, local_path):
     filename = url.split("/")[-1]
@@ -77,13 +78,17 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
             "file_2_name": os.path.basename(pptx_path),
             "file_2_url": pptx_url
         }
-        # Optional callback
-        next_webhook = payload.get("next_action_webhook")
-        if next_webhook:
-            try:
-                requests.post(next_webhook, json=result)
-            except:
-                pass
+
+        # Determine callback URL: use next_action_webhook if provided,
+        # otherwise fall back to IT Strategy API.
+        next_webhook = payload.get("next_action_webhook") or \
+            (os.getenv("IT_STRATEGY_API_URL", "https://it-strategy-api.onrender.com") + "/start_it_strategy")
+
+        try:
+            requests.post(next_webhook, json=result, timeout=30)
+        except Exception:
+            # swallow any callback errors
+            pass
 
         return result
 
