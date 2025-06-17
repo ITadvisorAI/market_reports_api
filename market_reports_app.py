@@ -8,6 +8,12 @@ from market_reports_process import generate_market_reports
 from drive_utils import upload_to_drive
 
 app = Flask(__name__)
+
+@app.route("/healthz", methods=["GET"])
+def health_check():
+    """Simple keep-alive endpoint."""
+    return "OK", 200
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 BASE_DIR = "temp_sessions"
