@@ -1,19 +1,44 @@
 import os
 import json
 import traceback
+import logging
 import requests
 from docxtpl import DocxTemplate
 from pptx import Presentation
 from pptx.util import Inches
 from drive_utils import upload_to_drive
+from flask import Flask, request, jsonify
 
 # Templates directory should contain the provided DOCX/PPTX templates
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 DOCX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.docx")
 PPTX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.pptx")
 
-# Remove the old import to avoid duplication; use drive_utils.upload_to_drive
-# from market_gap_process import upload_to_drive
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+
+@app.route("/start_market_gap", methods=["POST"])
+def start_market_gap():
+    data = request.get_json(force=True)
+    logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
+
+    session_id = data.get("session_id")
+    if not session_id:
+        return jsonify({"error": "Missing session_id"}), 400
+
+    # Create local session folder
+    local_path = os.path.join("temp_sessions", session_id)
+    os.makedirs(local_path, exist_ok=True)
+
+    # Call the existing report generation logic
+    result = generate_market_reports(
+        session_id,
+        data.get("email", ""),
+        data.get("folder_id", ""),
+        data,
+        local_path
+    )
+    return jsonify(result), 200
 
 
 def download_chart(url, local_path):
@@ -73,6 +98,11 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
             "session_id": session_id,
             "gpt_module": "gap_market",
             "status": "complete",
+            "content": payload.get("content", {}),
+            "charts": payload.get("charts", {}),
+            "files": [
+                {"file_name": f['file_name'], "file_url": f['file_url']} for f in payload.get("files", [])
+            ],
             "file_1_name": os.path.basename(docx_path),
             "file_1_url": docx_url,
             "file_2_name": os.path.basename(pptx_path),
@@ -81,18 +111,22 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
 
         # Determine callback URL: use next_action_webhook if provided,
         # otherwise fall back to IT Strategy API.
-        next_webhook = payload.get("next_action_webhook") or \
-            (os.getenv("IT_STRATEGY_API_URL", "https://it-strategy-api.onrender.com") + "/start_it_strategy")
+        next_webhook = payload.get("next_action_webhook") or (
+            os.getenv("IT_STRATEGY_API_URL", "https://it-strategy-api.onrender.com") + "/start_it_strategy"
+        )
 
         try:
             requests.post(next_webhook, json=result, timeout=30)
         except Exception:
-            # swallow any callback errors
             pass
 
         return result
 
     except Exception as e:
-        print(f"🔥 Market Reports generation failed: {e}")
+        logging.error(f"🔥 Market Reports generation failed: {e}")
         traceback.print_exc()
         return None
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
