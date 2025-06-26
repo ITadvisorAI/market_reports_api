@@ -83,8 +83,22 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
 
         # Slide 1: Tier Distribution Chart
         slide = pres.slides[1]
-        chart_path = download_chart(charts.get("hardware_tier_distribution"), local_path)
-        slide.shapes.add_picture(chart_path, Inches(1), Inches(1), width=Inches(8), height=Inches(4.5))
+         # Pick the hardware-tier chart URL (try both possible keys)
+    hw_url = charts.get("hardware_tier_distribution") \
+             or charts.get("hardware_insights_tier")
+    if hw_url:
+        chart_path = download_chart(hw_url, local_path)
+        slide.shapes.add_picture(chart_path, Inches(1), Inches(1),
+                                 width=Inches(8), height=Inches(4.5))
+
+    # Then on your next slide (or wherever), do the same for software
+    slide = pres.slides[2]  # or whichever index you use
+    sw_url = charts.get("software_tier_distribution") \
+             or charts.get("software_insights_tier")
+    if sw_url:
+        chart_path = download_chart(sw_url, local_path)
+        slide.shapes.add_picture(chart_path, Inches(1), Inches(1),
+                                 width=Inches(8), height=Inches(4.5))
 
         # ...add additional slides mapping content and charts...
 
