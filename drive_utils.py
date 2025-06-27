@@ -1,170 +1,71 @@
 import os
 import json
 import traceback
-import logging
-import requests
-from docxtpl import DocxTemplate
-from pptx import Presentation
-from pptx.util import Inches
-from drive_utils import upload_to_drive
-from flask import Flask, request, jsonify
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
 
-# Templates directory should contain the provided DOCX/PPTX templates
-TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
-DOCX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.docx")
-PPTX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.pptx")
-
-app = Flask(__name__)
-logging.basicConfig(level=logging.INFO)
-
-@app.route("/start_market_gap", methods=["POST"])
-def start_market_gap():
-    data = request.get_json(force=True)
-    logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
-
-    session_id = data.get("session_id")
-    if not session_id:
-        return jsonify({"error": "Missing session_id"}), 400
-
-    # Create local session folder
-    local_path = os.path.join("temp_sessions", session_id)
-    os.makedirs(local_path, exist_ok=True)
-
-    # Extract parameters for report generation
-    email     = data.get("email", "")
-    folder_id = data.get("folder_id", "")
-    payload   = data
-    try:
-        result = generate_market_reports(session_id, email, folder_id, payload, local_path)
-        # Optional callback
-        next_webhook = payload.get("next_action_webhook")
-        if next_webhook and result:
-            try:
-                requests.post(next_webhook, json=result, timeout=30)
-            except Exception:
-                pass
-        return jsonify(result), 200
-
-    except Exception as e:
-        logging.error(f"🔥 Market Reports generation failed: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+# === Google Drive Setup ===
+drive_service = None
+try:
+    creds_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if creds_json:
+        creds = service_account.Credentials.from_service_account_info(
+            json.loads(creds_json),
+            scopes=["https://www.googleapis.com/auth/drive"]
+        )
+        drive_service = build("drive", "v3", credentials=creds)
+    else:
+        print("⚠️ GOOGLE_SERVICE_ACCOUNT_JSON not set; Drive uploads will fail.")
+except Exception as e:
+    print(f"❌ Failed to initialize Google Drive: {e}")
+    traceback.print_exc()
 
 
-def download_chart(url, local_path):
-    filename = url.split("/")[-1]
-    dest = os.path.join(local_path, filename)
-    resp = requests.get(url)
-    resp.raise_for_status()
-    with open(dest, "wb") as f:
-        f.write(resp.content)
-    return dest
-
-
-def generate_market_reports(session_id, email, folder_id, payload, local_path):
+def upload_to_drive(file_path: str, session_id: str, folder_id: str = None) -> str:
     """
-    Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
+    Uploads a file to a Google Drive folder.
+
+    If folder_id is provided, the file is uploaded there.
+    Otherwise, finds or creates a folder named after session_id.
+
+    Returns the Drive "view" URL of the uploaded file,
+    or None on failure.
     """
     try:
-        # 1. Generate DOCX report
-        doc = DocxTemplate(DOCX_TEMPLATE)
-        context = {}
-        context.update(payload.get("content", {}))
-        context["charts"] = payload.get("charts", {})
-        docx_filename = f"market_gap_analysis_report_{session_id}.docx"
-        docx_path = os.path.join(local_path, docx_filename)
-        doc.render(context)
-        doc.save(docx_path)
-        docx_url = upload_to_drive(docx_path, session_id, folder_id)
+        if not drive_service:
+            raise RuntimeError("Drive service not initialized")
 
-        # 2. Generate PPTX executive report
-        pres = Presentation(PPTX_TEMPLATE)
-        content = payload.get("content", {})
-        charts = payload.get("charts", {})
+        # Determine target folder
+        if folder_id:
+            target_folder = folder_id
+        else:
+            # Search for existing folder
+            query = f"name='{session_id}' and mimeType='application/vnd.google-apps.folder'"
+            resp = drive_service.files().list(q=query, fields="files(id)").execute()
+            files = resp.get("files", [])
+            if files:
+                target_folder = files[0]["id"]
+            else:
+                folder_meta = {
+                    "name": session_id,
+                    "mimeType": "application/vnd.google-apps.folder"
+                }
+                created = drive_service.files().create(body=folder_meta, fields="id").execute()
+                target_folder = created["id"]
 
-        # Slide 0: Executive Summary
-        slide = pres.slides[0]
-        for shape in slide.shapes:
-            if shape.has_text_frame:
-                text = shape.text
-                if "{{executive_summary}}" in text:
-                    shape.text = content.get("executive_summary", "")
-
-        # Slide 1: Tier Distribution Chart
-        slide = pres.slides[1]
-        hw_url = (
-            charts.get("hardware_tier_distribution")
-            or charts.get("hardware_insights_tier")
-        )
-        if hw_url:
-            chart_local_path = os.path.join(local_path, "hardware_tier.png")
-            chart_path = download_chart(hw_url, chart_local_path)
-            slide.shapes.add_picture(
-                chart_path,
-                Inches(1), Inches(1),
-                width=Inches(8), height=Inches(4.5)
-            )
-
-        # Slide 2: Software Tier Distribution Chart
-        slide = pres.slides[2]
-        sw_url = (
-            charts.get("software_tier_distribution")
-            or charts.get("software_insights_tier")
-        )
-        if sw_url:
-            chart_local_path = os.path.join(local_path, "software_tier.png")
-            chart_path = download_chart(sw_url, chart_local_path)
-            slide.shapes.add_picture(
-                chart_path,
-                Inches(1), Inches(1),
-                width=Inches(8), height=Inches(4.5)
-            )
-
-        # ...add additional slides mapping content and charts...
-
-        # Save PPTX
-        pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
-        pptx_path = os.path.join(local_path, pptx_filename)
-        pres.save(pptx_path)
-        pptx_url = upload_to_drive(pptx_path, session_id, folder_id)
-
-        # 3. Construct result payload
-        result = {
-            "session_id": session_id,
-            "gpt_module": "gap_market",
-            "status": "complete",
-            "content": payload.get("content", {}),
-            "charts": payload.get("charts", {}),
-            "files": [
-                {"file_name": f['file_name'], "file_url": f['file_url']}
-                for f in payload.get("files", [])
-            ],
-            "file_1_name": os.path.basename(docx_path),
-            "file_1_url": docx_url,
-            "file_2_name": os.path.basename(pptx_path),
-            "file_2_url": pptx_url
-        }
-
-        # Determine callback URL: use next_action_webhook if provided,
-        # otherwise fall back to IT Strategy API.
-        next_webhook = payload.get("next_action_webhook") or (
-            os.getenv("IT_STRATEGY_API_URL", "https://it-strategy-api.onrender.com")
-            + "/start_it_strategy"
-        )
-
-        try:
-            requests.post(next_webhook, json=result, timeout=30)
-        except Exception:
-            pass
-
-        return result
+        # Upload the file
+        file_metadata = {"name": os.path.basename(file_path), "parents": [target_folder]}
+        media = MediaFileUpload(file_path, resumable=True)
+        uploaded = drive_service.files().create(
+            body=file_metadata,
+            media_body=media,
+            fields="id"
+        ).execute()
+        file_id = uploaded.get("id")
+        return f"https://drive.google.com/file/d/{file_id}/view"
 
     except Exception as e:
-        logging.error(f"🔥 Market Reports generation failed: {e}")
+        print(f"❌ Upload failed for {file_path}: {e}")
         traceback.print_exc()
         return None
-
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
