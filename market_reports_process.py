@@ -47,6 +47,18 @@ def download_chart(url: str, local_path: str) -> str:
     return local_path
 
 
+def replace_placeholder(slide, key, text):
+    """
+    Replace ANY {{ key }} tag in all text frames of the slide.
+    """
+    pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}")
+    for shape in slide.shapes:
+        if shape.has_text_frame:
+            new_txt = pattern.sub(text, shape.text)
+            if new_txt != shape.text:
+                shape.text = new_txt
+
+
 @app.route("/start_market_gap", methods=["POST"])
 def start_market_gap():
     data = request.get_json(force=True)
@@ -99,6 +111,7 @@ def generate_market_reports(session_id: str,
         # Add metadata
         context["date"] = payload.get("date", "")
         context["organization_name"] = payload.get("organization_name", "")
+
         docx_filename = f"market_gap_analysis_report_{session_id}.docx"
         docx_path = os.path.join(local_path, docx_filename)
         doc.render(context)
@@ -111,10 +124,9 @@ def generate_market_reports(session_id: str,
         charts = payload.get("charts", {})
 
         # Slide 0: Executive Summary
-        slide = pres.slides[0]
-        for shape in slide.shapes:
-            if shape.has_text_frame and "{{executive_summary}}" in shape.text:
-                shape.text = content.get("executive_summary", "")
+        replace_placeholder(pres.slides[0],
+                            "executive_summary",
+                            content.get("executive_summary", ""))
 
         # Slide 1: Hardware Tier Distribution Chart
         slide = pres.slides[1]
@@ -122,8 +134,11 @@ def generate_market_reports(session_id: str,
         if hw_url:
             chart_local = os.path.join(local_path, "hardware_tier.png")
             chart_path = download_chart(hw_url, chart_local)
-            slide.shapes.add_picture(chart_path, Inches(1), Inches(1),
-                                     width=Inches(8), height=Inches(4.5))
+            slide.shapes.add_picture(
+                chart_path,
+                Inches(1), Inches(1),
+                width=Inches(8), height=Inches(4.5)
+            )
 
         # Slide 2: Software Tier Distribution Chart
         slide = pres.slides[2]
@@ -131,32 +146,31 @@ def generate_market_reports(session_id: str,
         if sw_url:
             chart_local = os.path.join(local_path, "software_tier.png")
             chart_path = download_chart(sw_url, chart_local)
-            slide.shapes.add_picture(chart_path, Inches(1), Inches(1),
-                                     width=Inches(8), height=Inches(4.5))
+            slide.shapes.add_picture(
+                chart_path,
+                Inches(1), Inches(1),
+                width=Inches(8), height=Inches(4.5)
+            )
 
         # Slide 3: Current State Overview
-        slide = pres.slides[3]
-        for shape in slide.shapes:
-            if shape.has_text_frame and "{{current_state_overview}}" in shape.text:
-                shape.text = content.get("current_state_overview", "")
+        replace_placeholder(pres.slides[3],
+                            "current_state_overview",
+                            content.get("current_state_overview", ""))
 
         # Slide 4: Hardware Gap Analysis
-        slide = pres.slides[4]
-        for shape in slide.shapes:
-            if shape.has_text_frame and "{{hardware_gap_analysis}}" in shape.text:
-                shape.text = content.get("hardware_gap_analysis", "")
+        replace_placeholder(pres.slides[4],
+                            "hardware_gap_analysis",
+                            content.get("hardware_gap_analysis", ""))
 
         # Slide 5: Software Gap Analysis
-        slide = pres.slides[5]
-        for shape in slide.shapes:
-            if shape.has_text_frame and "{{software_gap_analysis}}" in shape.text:
-                shape.text = content.get("software_gap_analysis", "")
+        replace_placeholder(pres.slides[5],
+                            "software_gap_analysis",
+                            content.get("software_gap_analysis", ""))
 
         # Slide 6: Market Benchmarking
-        slide = pres.slides[6]
-        for shape in slide.shapes:
-            if shape.has_text_frame and "{{market_benchmarking}}" in shape.text:
-                shape.text = content.get("market_benchmarking", "")
+        replace_placeholder(pres.slides[6],
+                            "market_benchmarking",
+                            content.get("market_benchmarking", ""))
 
         # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
