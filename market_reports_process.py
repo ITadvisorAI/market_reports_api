@@ -4,11 +4,11 @@ import re
 import traceback
 import logging
 import requests
+from flask import Flask, request, jsonify
 from docxtpl import DocxTemplate
 from pptx import Presentation
 from pptx.util import Inches
 from drive_utils import upload_to_drive
-from flask import Flask, request, jsonify
 
 # Templates directory
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
@@ -23,17 +23,14 @@ def to_direct_drive_url(url: str) -> str:
     """
     Convert a Google Drive share URL into a direct-download URL.
     """
-    # 1) look for ?id=FILE_ID or &id=FILE_ID
     m = re.search(r"[?&]id=([^&]+)", url)
     if m:
         file_id = m.group(1)
         return f"https://drive.google.com/uc?export=download&id={file_id}"
-    # 2) look for /d/FILE_ID/
     m = re.search(r"/d/([^/]+)", url)
     if m:
         file_id = m.group(1)
         return f"https://drive.google.com/uc?export=download&id={file_id}"
-    # fallback: return original
     return url
 
 
@@ -42,7 +39,6 @@ def download_chart(url: str, local_path: str) -> str:
     Download a chart PNG from Drive into local_path as a file.
     """
     direct_url = to_direct_drive_url(url)
-    # ensure the folder exists
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     resp = requests.get(direct_url)
     resp.raise_for_status()
@@ -60,19 +56,18 @@ def start_market_gap():
     if not session_id:
         return jsonify({"error": "Missing session_id"}), 400
 
-    # Create a local folder for this session
+    # Create local session folder
     local_path = os.path.join("temp_sessions", session_id)
     os.makedirs(local_path, exist_ok=True)
 
     try:
         result = generate_market_reports(
-            session_id,
-            data.get("email", ""),
-            data.get("folder_id", ""),
-            data,
-            local_path
+            session_id=session_id,
+            email=data.get("email", ""),
+            folder_id=data.get("folder_id", ""),
+            payload=data,
+            local_path=local_path
         )
-        # optional callback
         next_webhook = data.get("next_action_webhook")
         if next_webhook and result:
             try:
@@ -96,22 +91,24 @@ def generate_market_reports(session_id: str,
     Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
     """
     try:
-        # 1. Generate DOCX
+        # 1. Generate DOCX report
         doc = DocxTemplate(DOCX_TEMPLATE)
         context = {}
+        # Fill in all content sections
         context.update(payload.get("content", {}))
-        context["charts"] = payload.get("charts", {})
-
+        # Add metadata
+        context["date"] = payload.get("date", "")
+        context["organization_name"] = payload.get("organization_name", "")
         docx_filename = f"market_gap_analysis_report_{session_id}.docx"
-        docx_path     = os.path.join(local_path, docx_filename)
+        docx_path = os.path.join(local_path, docx_filename)
         doc.render(context)
         doc.save(docx_path)
         docx_url = upload_to_drive(docx_path, session_id, folder_id)
 
-        # 2. Generate PPTX
-        pres    = Presentation(PPTX_TEMPLATE)
+        # 2. Generate PPTX executive report
+        pres = Presentation(PPTX_TEMPLATE)
         content = payload.get("content", {})
-        charts  = payload.get("charts", {})
+        charts = payload.get("charts", {})
 
         # Slide 0: Executive Summary
         slide = pres.slides[0]
@@ -119,59 +116,69 @@ def generate_market_reports(session_id: str,
             if shape.has_text_frame and "{{executive_summary}}" in shape.text:
                 shape.text = content.get("executive_summary", "")
 
-        # Slide 1: Hardware Tier Distribution
+        # Slide 1: Hardware Tier Distribution Chart
         slide = pres.slides[1]
-        hw_url = (
-            charts.get("hardware_tier_distribution")
-            or charts.get("hardware_insights_tier")
-        )
+        hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
         if hw_url:
-            chart_local_path = os.path.join(local_path, "hardware_tier.png")
-            chart_path       = download_chart(hw_url, chart_local_path)
-            slide.shapes.add_picture(
-                chart_path,
-                Inches(1), Inches(1),
-                width=Inches(8), height=Inches(4.5)
-            )
+            chart_local = os.path.join(local_path, "hardware_tier.png")
+            chart_path = download_chart(hw_url, chart_local)
+            slide.shapes.add_picture(chart_path, Inches(1), Inches(1),
+                                     width=Inches(8), height=Inches(4.5))
 
-        # Slide 2: Software Tier Distribution
+        # Slide 2: Software Tier Distribution Chart
         slide = pres.slides[2]
-        sw_url = (
-            charts.get("software_tier_distribution")
-            or charts.get("software_insights_tier")
-        )
+        sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
         if sw_url:
-            chart_local_path = os.path.join(local_path, "software_tier.png")
-            chart_path       = download_chart(sw_url, chart_local_path)
-            slide.shapes.add_picture(
-                chart_path,
-                Inches(1), Inches(1),
-                width=Inches(8), height=Inches(4.5)
-            )
+            chart_local = os.path.join(local_path, "software_tier.png")
+            chart_path = download_chart(sw_url, chart_local)
+            slide.shapes.add_picture(chart_path, Inches(1), Inches(1),
+                                     width=Inches(8), height=Inches(4.5))
 
-        # ...additional slides mapping content/charts as needed...
+        # Slide 3: Current State Overview
+        slide = pres.slides[3]
+        for shape in slide.shapes:
+            if shape.has_text_frame and "{{current_state_overview}}" in shape.text:
+                shape.text = content.get("current_state_overview", "")
+
+        # Slide 4: Hardware Gap Analysis
+        slide = pres.slides[4]
+        for shape in slide.shapes:
+            if shape.has_text_frame and "{{hardware_gap_analysis}}" in shape.text:
+                shape.text = content.get("hardware_gap_analysis", "")
+
+        # Slide 5: Software Gap Analysis
+        slide = pres.slides[5]
+        for shape in slide.shapes:
+            if shape.has_text_frame and "{{software_gap_analysis}}" in shape.text:
+                shape.text = content.get("software_gap_analysis", "")
+
+        # Slide 6: Market Benchmarking
+        slide = pres.slides[6]
+        for shape in slide.shapes:
+            if shape.has_text_frame and "{{market_benchmarking}}" in shape.text:
+                shape.text = content.get("market_benchmarking", "")
 
         # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
-        pptx_path     = os.path.join(local_path, pptx_filename)
+        pptx_path = os.path.join(local_path, pptx_filename)
         pres.save(pptx_path)
-        pptx_url      = upload_to_drive(pptx_path, session_id, folder_id)
+        pptx_url = upload_to_drive(pptx_path, session_id, folder_id)
 
-        # 3. Build result
+        # 3. Construct result payload
         result = {
             "session_id": session_id,
             "gpt_module": "gap_market",
-            "status":     "complete",
-            "content":    payload.get("content", {}),
-            "charts":     charts,
-            "files":      [
+            "status": "complete",
+            "content": content,
+            "charts": charts,
+            "files": [
                 {"file_name": f["file_name"], "file_url": f["file_url"]}
                 for f in payload.get("files", [])
             ],
             "file_1_name": os.path.basename(docx_path),
-            "file_1_url":  docx_url,
+            "file_1_url": docx_url,
             "file_2_name": os.path.basename(pptx_path),
-            "file_2_url":  pptx_url
+            "file_2_url": pptx_url
         }
 
         # 4. Downstream callback
