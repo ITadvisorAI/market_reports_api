@@ -9,13 +9,14 @@ from pptx.util import Inches
 from drive_utils import upload_to_drive
 from flask import Flask, request, jsonify
 
-# Templates directory should contain the provided DOCX/PPTX templates
+# Templates directory
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
 DOCX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.docx")
 PPTX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.pptx")
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
+
 
 @app.route("/start_market_gap", methods=["POST"])
 def start_market_gap():
@@ -26,17 +27,16 @@ def start_market_gap():
     if not session_id:
         return jsonify({"error": "Missing session_id"}), 400
 
-    # Create local session folder
+    # Create a local folder for this session
     local_path = os.path.join("temp_sessions", session_id)
     os.makedirs(local_path, exist_ok=True)
 
-    # Extract parameters for report generation
     email     = data.get("email", "")
     folder_id = data.get("folder_id", "")
     payload   = data
+
     try:
         result = generate_market_reports(session_id, email, folder_id, payload, local_path)
-        # Optional callback
         next_webhook = payload.get("next_action_webhook")
         if next_webhook and result:
             try:
@@ -51,17 +51,26 @@ def start_market_gap():
         return jsonify({"error": str(e)}), 500
 
 
-def download_chart(url, local_path):
-    filename = url.split("/")[-1]
-    dest = os.path.join(local_path, filename)
+def download_chart(url: str, local_path: str) -> str:
+    """
+    Download a chart PNG from URL into local_path (as file).
+    Updated to write directly to the given file path.
+    """
+    # Ensure the containing folder exists
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+
     resp = requests.get(url)
     resp.raise_for_status()
-    with open(dest, "wb") as f:
+    with open(local_path, "wb") as f:
         f.write(resp.content)
-    return dest
+    return local_path
 
 
-def generate_market_reports(session_id, email, folder_id, payload, local_path):
+def generate_market_reports(session_id: str,
+                            email: str,
+                            folder_id: str,
+                            payload: dict,
+                            local_path: str) -> dict:
     """
     Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
     """
@@ -71,24 +80,24 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
         context = {}
         context.update(payload.get("content", {}))
         context["charts"] = payload.get("charts", {})
+
         docx_filename = f"market_gap_analysis_report_{session_id}.docx"
-        docx_path = os.path.join(local_path, docx_filename)
+        docx_path     = os.path.join(local_path, docx_filename)
         doc.render(context)
         doc.save(docx_path)
+
         docx_url = upload_to_drive(docx_path, session_id, folder_id)
 
         # 2. Generate PPTX executive report
-        pres = Presentation(PPTX_TEMPLATE)
+        pres    = Presentation(PPTX_TEMPLATE)
         content = payload.get("content", {})
-        charts = payload.get("charts", {})
+        charts  = payload.get("charts", {})
 
         # Slide 0: Executive Summary
         slide = pres.slides[0]
         for shape in slide.shapes:
-            if shape.has_text_frame:
-                text = shape.text
-                if "{{executive_summary}}" in text:
-                    shape.text = content.get("executive_summary", "")
+            if shape.has_text_frame and "{{executive_summary}}" in shape.text:
+                shape.text = content.get("executive_summary", "")
 
         # Slide 1: Tier Distribution Chart
         slide = pres.slides[1]
@@ -98,7 +107,7 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
         )
         if hw_url:
             chart_local_path = os.path.join(local_path, "hardware_tier.png")
-            chart_path = download_chart(hw_url, chart_local_path)
+            chart_path       = download_chart(hw_url, chart_local_path)
             slide.shapes.add_picture(
                 chart_path,
                 Inches(1), Inches(1),
@@ -113,49 +122,49 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
         )
         if sw_url:
             chart_local_path = os.path.join(local_path, "software_tier.png")
-            chart_path = download_chart(sw_url, chart_local_path)
+            chart_path       = download_chart(sw_url, chart_local_path)
             slide.shapes.add_picture(
                 chart_path,
                 Inches(1), Inches(1),
                 width=Inches(8), height=Inches(4.5)
             )
 
-        # ...add additional slides mapping content and charts...
+        # ...additional slides as needed...
 
         # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
-        pptx_path = os.path.join(local_path, pptx_filename)
+        pptx_path     = os.path.join(local_path, pptx_filename)
         pres.save(pptx_path)
+
         pptx_url = upload_to_drive(pptx_path, session_id, folder_id)
 
         # 3. Construct result payload
         result = {
             "session_id": session_id,
             "gpt_module": "gap_market",
-            "status": "complete",
-            "content": payload.get("content", {}),
-            "charts": payload.get("charts", {}),
+            "status":     "complete",
+            "content":    payload.get("content", {}),
+            "charts":     payload.get("charts", {}),
             "files": [
-                {"file_name": f['file_name'], "file_url": f['file_url']}
+                {"file_name": f["file_name"], "file_url": f["file_url"]}
                 for f in payload.get("files", [])
             ],
             "file_1_name": os.path.basename(docx_path),
-            "file_1_url": docx_url,
+            "file_1_url":  docx_url,
             "file_2_name": os.path.basename(pptx_path),
-            "file_2_url": pptx_url
+            "file_2_url":  pptx_url
         }
 
-        # Determine callback URL: use next_action_webhook if provided,
-        # otherwise fall back to IT Strategy API.
+        # 4. Downstream callback to IT Strategy (if any)
         next_webhook = payload.get("next_action_webhook") or (
-            os.getenv("IT_STRATEGY_API_URL", "https://it-strategy-api.onrender.com")
+            os.getenv("IT_STRATEGY_API_URL", "")
             + "/start_it_strategy"
         )
-
-        try:
-            requests.post(next_webhook, json=result, timeout=30)
-        except Exception:
-            pass
+        if next_webhook:
+            try:
+                requests.post(next_webhook, json=result, timeout=30)
+            except Exception:
+                pass
 
         return result
 
