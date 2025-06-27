@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import traceback
 import logging
 import requests
@@ -18,6 +19,38 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+def to_direct_drive_url(url: str) -> str:
+    """
+    Convert a Google Drive share URL into a direct-download URL.
+    """
+    # 1) look for ?id=FILE_ID or &id=FILE_ID
+    m = re.search(r"[?&]id=([^&]+)", url)
+    if m:
+        file_id = m.group(1)
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    # 2) look for /d/FILE_ID/
+    m = re.search(r"/d/([^/]+)", url)
+    if m:
+        file_id = m.group(1)
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    # fallback: return original
+    return url
+
+
+def download_chart(url: str, local_path: str) -> str:
+    """
+    Download a chart PNG from Drive into local_path as a file.
+    """
+    direct_url = to_direct_drive_url(url)
+    # ensure the folder exists
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    resp = requests.get(direct_url)
+    resp.raise_for_status()
+    with open(local_path, "wb") as f:
+        f.write(resp.content)
+    return local_path
+
+
 @app.route("/start_market_gap", methods=["POST"])
 def start_market_gap():
     data = request.get_json(force=True)
@@ -31,13 +64,16 @@ def start_market_gap():
     local_path = os.path.join("temp_sessions", session_id)
     os.makedirs(local_path, exist_ok=True)
 
-    email     = data.get("email", "")
-    folder_id = data.get("folder_id", "")
-    payload   = data
-
     try:
-        result = generate_market_reports(session_id, email, folder_id, payload, local_path)
-        next_webhook = payload.get("next_action_webhook")
+        result = generate_market_reports(
+            session_id,
+            data.get("email", ""),
+            data.get("folder_id", ""),
+            data,
+            local_path
+        )
+        # optional callback
+        next_webhook = data.get("next_action_webhook")
         if next_webhook and result:
             try:
                 requests.post(next_webhook, json=result, timeout=30)
@@ -51,21 +87,6 @@ def start_market_gap():
         return jsonify({"error": str(e)}), 500
 
 
-def download_chart(url: str, local_path: str) -> str:
-    """
-    Download a chart PNG from URL into local_path (as file).
-    Updated to write directly to the given file path.
-    """
-    # Ensure the containing folder exists
-    os.makedirs(os.path.dirname(local_path), exist_ok=True)
-
-    resp = requests.get(url)
-    resp.raise_for_status()
-    with open(local_path, "wb") as f:
-        f.write(resp.content)
-    return local_path
-
-
 def generate_market_reports(session_id: str,
                             email: str,
                             folder_id: str,
@@ -75,7 +96,7 @@ def generate_market_reports(session_id: str,
     Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
     """
     try:
-        # 1. Generate DOCX report
+        # 1. Generate DOCX
         doc = DocxTemplate(DOCX_TEMPLATE)
         context = {}
         context.update(payload.get("content", {}))
@@ -85,10 +106,9 @@ def generate_market_reports(session_id: str,
         docx_path     = os.path.join(local_path, docx_filename)
         doc.render(context)
         doc.save(docx_path)
-
         docx_url = upload_to_drive(docx_path, session_id, folder_id)
 
-        # 2. Generate PPTX executive report
+        # 2. Generate PPTX
         pres    = Presentation(PPTX_TEMPLATE)
         content = payload.get("content", {})
         charts  = payload.get("charts", {})
@@ -99,7 +119,7 @@ def generate_market_reports(session_id: str,
             if shape.has_text_frame and "{{executive_summary}}" in shape.text:
                 shape.text = content.get("executive_summary", "")
 
-        # Slide 1: Tier Distribution Chart
+        # Slide 1: Hardware Tier Distribution
         slide = pres.slides[1]
         hw_url = (
             charts.get("hardware_tier_distribution")
@@ -114,7 +134,7 @@ def generate_market_reports(session_id: str,
                 width=Inches(8), height=Inches(4.5)
             )
 
-        # Slide 2: Software Tier Distribution Chart
+        # Slide 2: Software Tier Distribution
         slide = pres.slides[2]
         sw_url = (
             charts.get("software_tier_distribution")
@@ -129,23 +149,22 @@ def generate_market_reports(session_id: str,
                 width=Inches(8), height=Inches(4.5)
             )
 
-        # ...additional slides as needed...
+        # ...additional slides mapping content/charts as needed...
 
         # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
         pptx_path     = os.path.join(local_path, pptx_filename)
         pres.save(pptx_path)
+        pptx_url      = upload_to_drive(pptx_path, session_id, folder_id)
 
-        pptx_url = upload_to_drive(pptx_path, session_id, folder_id)
-
-        # 3. Construct result payload
+        # 3. Build result
         result = {
             "session_id": session_id,
             "gpt_module": "gap_market",
             "status":     "complete",
             "content":    payload.get("content", {}),
-            "charts":     payload.get("charts", {}),
-            "files": [
+            "charts":     charts,
+            "files":      [
                 {"file_name": f["file_name"], "file_url": f["file_url"]}
                 for f in payload.get("files", [])
             ],
@@ -155,10 +174,9 @@ def generate_market_reports(session_id: str,
             "file_2_url":  pptx_url
         }
 
-        # 4. Downstream callback to IT Strategy (if any)
+        # 4. Downstream callback
         next_webhook = payload.get("next_action_webhook") or (
-            os.getenv("IT_STRATEGY_API_URL", "")
-            + "/start_it_strategy"
+            os.getenv("IT_STRATEGY_API_URL", "") + "/start_it_strategy"
         )
         if next_webhook:
             try:
