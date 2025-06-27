@@ -30,15 +30,25 @@ def start_market_gap():
     local_path = os.path.join("temp_sessions", session_id)
     os.makedirs(local_path, exist_ok=True)
 
-    # Call the existing report generation logic
-    result = generate_market_reports(
-        session_id,
-        data.get("email", ""),
-        data.get("folder_id", ""),
-        data,
-        local_path
-    )
-    return jsonify(result), 200
+    # Extract parameters for report generation
+    email     = data.get("email", "")
+    folder_id = data.get("folder_id", "")
+    payload   = data
+    try:
+        result = generate_market_reports(session_id, email, folder_id, payload, local_path)
+        # Optional callback
+        next_webhook = payload.get("next_action_webhook")
+        if next_webhook and result:
+            try:
+                requests.post(next_webhook, json=result, timeout=30)
+            except Exception:
+                pass
+        return jsonify(result), 200
+
+    except Exception as e:
+        logging.error(f"🔥 Market Reports generation failed: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 def download_chart(url, local_path):
@@ -53,14 +63,13 @@ def download_chart(url, local_path):
 
 def generate_market_reports(session_id, email, folder_id, payload, local_path):
     """
-    Renders DOCX and PPTX using templates, uploads to Drive, and optionally calls back.
+    Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
     """
     try:
         # 1. Generate DOCX report
         doc = DocxTemplate(DOCX_TEMPLATE)
         context = {}
         context.update(payload.get("content", {}))
-        # Add chart URLs if you want to embed via links or placeholders
         context["charts"] = payload.get("charts", {})
         docx_filename = f"market_gap_analysis_report_{session_id}.docx"
         docx_path = os.path.join(local_path, docx_filename)
@@ -82,18 +91,14 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
                     shape.text = content.get("executive_summary", "")
 
         # Slide 1: Tier Distribution Chart
-        # Slide 1: Tier Distribution Chart
         slide = pres.slides[1]
-
-        # Pick the hardware-tier chart URL (try both possible keys)
         hw_url = (
             charts.get("hardware_tier_distribution")
             or charts.get("hardware_insights_tier")
         )
         if hw_url:
-            # define where to download the chart PNG
-            local_path = os.path.join(tmp_dir, "hardware_tier.png")
-            chart_path = download_chart(hw_url, local_path)
+            chart_local_path = os.path.join(local_path, "hardware_tier.png")
+            chart_path = download_chart(hw_url, chart_local_path)
             slide.shapes.add_picture(
                 chart_path,
                 Inches(1), Inches(1),
@@ -102,15 +107,13 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
 
         # Slide 2: Software Tier Distribution Chart
         slide = pres.slides[2]
-
-        # Pick the software-tier chart URL
         sw_url = (
             charts.get("software_tier_distribution")
             or charts.get("software_insights_tier")
         )
         if sw_url:
-            local_path = os.path.join(tmp_dir, "software_tier.png")
-            chart_path = download_chart(sw_url, local_path)
+            chart_local_path = os.path.join(local_path, "software_tier.png")
+            chart_path = download_chart(sw_url, chart_local_path)
             slide.shapes.add_picture(
                 chart_path,
                 Inches(1), Inches(1),
@@ -119,6 +122,7 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
 
         # ...add additional slides mapping content and charts...
 
+        # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
         pptx_path = os.path.join(local_path, pptx_filename)
         pres.save(pptx_path)
@@ -132,7 +136,8 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
             "content": payload.get("content", {}),
             "charts": payload.get("charts", {}),
             "files": [
-                {"file_name": f['file_name'], "file_url": f['file_url']} for f in payload.get("files", [])
+                {"file_name": f['file_name'], "file_url": f['file_url']}
+                for f in payload.get("files", [])
             ],
             "file_1_name": os.path.basename(docx_path),
             "file_1_url": docx_url,
@@ -143,7 +148,8 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
         # Determine callback URL: use next_action_webhook if provided,
         # otherwise fall back to IT Strategy API.
         next_webhook = payload.get("next_action_webhook") or (
-            os.getenv("IT_STRATEGY_API_URL", "https://it-strategy-api.onrender.com") + "/start_it_strategy"
+            os.getenv("IT_STRATEGY_API_URL", "https://it-strategy-api.onrender.com")
+            + "/start_it_strategy"
         )
 
         try:
@@ -157,6 +163,7 @@ def generate_market_reports(session_id, email, folder_id, payload, local_path):
         logging.error(f"🔥 Market Reports generation failed: {e}")
         traceback.print_exc()
         return None
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
