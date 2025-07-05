@@ -114,8 +114,9 @@ def generate_market_reports(session_id: str,
     content = payload.get("content", {})
     charts = payload.get("charts", {})
 
-    # Slide 0: Executive Summary
-    replace_placeholder(pres.slides[0], "executive_summary", content.get("executive_summary", ""))
+    # Replace Executive Summary in template slide(s)
+    for slide in pres.slides:
+        replace_placeholder(slide, "executive_summary", content.get("executive_summary", ""))
 
     # Slide 1: Hardware Tier Chart
     hw_url = charts.get("hardware_insights_tier")
@@ -135,24 +136,15 @@ def generate_market_reports(session_id: str,
             chart_path, Inches(1), Inches(1), width=Inches(8), height=Inches(4.5)
         )
 
-    # Additional narrative slides
-    slide_layout = pres.slide_layouts[1]
-    text_box_pos = (Inches(1), Inches(1), Inches(8), Inches(4.5))
-    sections = [
-        ("current_state_overview", "Current State Overview"),
-        ("hardware_gap_analysis", "Hardware Gap Analysis"),
-        ("software_gap_analysis", "Software Gap Analysis"),
-        ("market_benchmarking", "Market Benchmarking")
-    ]
-    for key, title in sections:
-        slide = pres.slides.add_slide(slide_layout)
-        slide.shapes.title.text = title
-        textbox = slide.shapes.add_textbox(*text_box_pos)
-        tf = textbox.text_frame
-        for line in content.get(key, "").split("\n"):
-            p = tf.add_paragraph()
-            p.text = line
-            p.font.size = Pt(12)
+    # Replace narrative placeholders in existing template slides
+    for key in [
+        "current_state_overview",
+        "hardware_gap_analysis",
+        "software_gap_analysis",
+        "market_benchmarking"
+    ]:
+        for slide in pres.slides:
+            replace_placeholder(slide, key, content.get(key, ""))
 
     # Save PPTX
     pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
