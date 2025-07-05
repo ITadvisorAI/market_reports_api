@@ -153,24 +153,36 @@ def generate_market_reports(session_id: str,
             )
 
         # Slide 3: Current State Overview
-        replace_placeholder(pres.slides[3],
-                            "current_state_overview",
-                            content.get("current_state_overview", ""))
+        slide = prs.slides.add_slide(layout)
+        # … add title/chart …
+        textbox = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+        tf = textbox.text_frame
+        for line in payload['content']['current_state_overview'].split("\n"):
+        tf.add_paragraph().text = line
 
         # Slide 4: Hardware Gap Analysis
-        replace_placeholder(pres.slides[4],
-                            "hardware_gap_analysis",
-                            content.get("hardware_gap_analysis", ""))
+        slide = prs.slides.add_slide(layout)
+        # … add title/chart …
+        textbox = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+        tf = textbox.text_frame
+        for line in payload['content']['hardware_gap_analysis'].split("\n"):
+        tf.add_paragraph().text = line
 
         # Slide 5: Software Gap Analysis
-        replace_placeholder(pres.slides[5],
-                            "software_gap_analysis",
-                            content.get("software_gap_analysis", ""))
+        slide = prs.slides.add_slide(layout)
+        # … add title/chart …
+        textbox = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+        tf = textbox.text_frame
+        for line in payload['content']['software_gap_analysis'].split("\n"):
+        tf.add_paragraph().text = line
 
         # Slide 6: Market Benchmarking
-        replace_placeholder(pres.slides[6],
-                            "market_benchmarking",
-                            content.get("market_benchmarking", ""))
+        slide = prs.slides.add_slide(layout)
+        # … add title/chart …
+        textbox = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+        tf = textbox.text_frame
+        for line in payload['content']['market_benchmarking'].split("\n"):
+        tf.add_paragraph().text = line
 
         # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
