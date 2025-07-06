@@ -139,30 +139,33 @@ def generate_market_reports(session_id: str,
             if len(pres.slides) > slide_index:
                 replace_placeholder(pres.slides[slide_index], key, content.get(key, ""))
 
-        # Optional: Add chart images to Slide 0 (Agenda)
-        chart_slide_index = 0
-        if len(pres.slides) > chart_slide_index:
-            hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
-            sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
+        # Add a new slide for charts right after Executive Summary
+        chart_slide_layout = pres.slide_layouts[1]  # "Title and Content" layout
+        chart_slide = pres.slides.add_slide(chart_slide_layout)
+        chart_slide.shapes.title.text = "Tier Distribution Overview"
 
-            if hw_url:
-                chart_local = os.path.join(local_path, "hardware_tier.png")
-                chart_path = download_chart(hw_url, chart_local)
-                if os.path.exists(chart_path):
-                    pres.slides[chart_slide_index].shapes.add_picture(
-                        chart_path,
-                        Inches(0.5), Inches(1.8),
-                        width=Inches(4), height=Inches(3)
-                    )
-            if sw_url:
-                chart_local = os.path.join(local_path, "software_tier.png")
-                chart_path = download_chart(sw_url, chart_local)
-                if os.path.exists(chart_path):
-                    pres.slides[chart_slide_index].shapes.add_picture(
-                        chart_path,
-                        Inches(5), Inches(1.8),
-                        width=Inches(4), height=Inches(3)
-                    )
+        hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
+        sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
+
+        if hw_url:
+            chart_local = os.path.join(local_path, "hardware_tier.png")
+            chart_path = download_chart(hw_url, chart_local)
+            if os.path.exists(chart_path):
+                chart_slide.shapes.add_picture(
+                    chart_path,
+                    Inches(0.5), Inches(1.8),
+                    width=Inches(4.5), height=Inches(3.5)
+                )
+
+        if sw_url:
+            chart_local = os.path.join(local_path, "software_tier.png")
+            chart_path = download_chart(sw_url, chart_local)
+            if os.path.exists(chart_path):
+                chart_slide.shapes.add_picture(
+                    chart_path,
+                    Inches(5), Inches(1.8),
+                    width=Inches(4.5), height=Inches(3.5)
+                )
 
         # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
