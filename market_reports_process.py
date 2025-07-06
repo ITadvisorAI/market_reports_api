@@ -114,11 +114,12 @@ def generate_market_reports(session_id: str,
     content = payload.get("content", {})
     charts = payload.get("charts", {})
 
-    # Replace Executive Summary in template slide(s)
-    for slide in pres.slides:
-        replace_placeholder(slide, "executive_summary", content.get("executive_summary", ""))
+    # Populate all placeholders on template slides
+    for key, text in content.items():
+        for slide in pres.slides:
+            replace_placeholder(slide, key, text)
 
-    # Slide 1: Hardware Tier Chart
+    # Insert charts for slides 1 and 2
     hw_url = charts.get("hardware_insights_tier")
     if hw_url:
         chart_local = os.path.join(local_path, "hardware_tier.png")
@@ -127,7 +128,6 @@ def generate_market_reports(session_id: str,
             chart_path, Inches(1), Inches(1), width=Inches(8), height=Inches(4.5)
         )
 
-    # Slide 2: Software Tier Chart
     sw_url = charts.get("software_insights_tier")
     if sw_url:
         chart_local = os.path.join(local_path, "software_tier.png")
@@ -135,16 +135,6 @@ def generate_market_reports(session_id: str,
         pres.slides[2].shapes.add_picture(
             chart_path, Inches(1), Inches(1), width=Inches(8), height=Inches(4.5)
         )
-
-    # Replace narrative placeholders in existing template slides
-    for key in [
-        "current_state_overview",
-        "hardware_gap_analysis",
-        "software_gap_analysis",
-        "market_benchmarking"
-    ]:
-        for slide in pres.slides:
-            replace_placeholder(slide, key, content.get(key, ""))
 
     # Save PPTX
     pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
