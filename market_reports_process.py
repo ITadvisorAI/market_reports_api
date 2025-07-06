@@ -1,24 +1,212 @@
-INFO:root:📦 Incoming payload for market reports:
-{
-  "session_id": "Temp_20250706025916_j_j_com",
-  "date": "2025-07-06",
-  "organization_name": "",
-  "content": {
-    "executive_summary": "**Executive Summary**\n\nIn our comprehensive analysis, we meticulously evaluated a total of 10,000 hardware items alongside 4,000 software items. This extensive review provides critical insights into our current IT inventory, enabling us to identify opportunities for optimization and enhancement. By understanding the performance, compatibility, and lifecycle of these assets, we can strategically align our IT resources with organizational goals, ensuring efficiency and effectiveness in our technology deployment. This foundational analysis sets the stage for informed decision-making and future IT transformation initiatives.",
-    "current_state_overview": "**Current State Overview**\n\nThe current IT landscape reveals a concerning scenario characterized by a total of 10,000 devices and 4,000 applications in operation. Alarmingly, none of these devices are categorized as healthy, indicating a critical lack of operational efficiency and potential vulnerabilities within the infrastructure. Furthermore, the absence of compliant licenses raises significant compliance risks and potential legal implications for the organization. This situation necessitates immediate attention and a strategic overhaul to ensure the health and compliance of the IT environment, ultimately enabling a more secure and efficient operational framework.",
-    "hardware_gap_analysis": "### Hardware Gap Analysis\n\nThe current inventory of hardware items reveals a consistent tier classification, with all servers categorized under Tier 2, indicating a standard level of performance and reliability. Each server, whether located on-premises or in the cloud, is equipped with adequate security measures, scalability options, and cost-effective management practices. \n\n**Key Observations:**\n\n1. **Diversity of Hardware Models**: The inventory includes a variety of models from reputable vendors such as HPE, Dell, Lenovo, and IBM. This diversity allows for flexibility in addressing different operational needs, though it may complicate maintenance and support.\n\n2. **Operating System Versions**: The servers are running a mix of RHEL and Windows Server versions, with some instances of z/OS for mainframe operations. While RHEL 8.6 and Windows Server 2019 are relatively recent, the presence of older versions like RHEL 7.9 and Windows Server 2016 may pose compatibility and security risks if not addressed promptly.\n\n3. **Performance and Reliability**: All servers exhibit acceptable performance levels for most applications, but there are noted areas for optimization. Reliability is generally good, with defined disaster recovery (DR) plans and redundancy for critical systems, though occasional minor disruptions have been reported.\n\n4. **Scalability and Future Growth**: Each server is capable of scaling to meet moderate growth, supported by documented scalability plans and virtualization strategies. This proactive approach is essential for accommodating future demands without significant overhauls.\n\n5. **Cost-Effectiveness**: The IT spending aligns with industry averages, and there are ongoing efforts to optimize costs through budgeting and ROI analysis. Asset lifecycle tracking is also in place, ensuring that investments are monitored for efficiency.\n\n**Recommendations**:\n\n- **Upgrade Older Systems**: Prioritize the upgrade of older OS versions to enhance security and compatibility with modern applications.\n- **Consolidate Hardware Models**: Consider standardizing on fewer models to streamline maintenance and support processes.\n- **Enhance Performance Monitoring**: Implement more robust performance monitoring tools to identify and address optimization opportunities proactively.\n- **Review Scalability Plans**: Regularly revisit scalability plans to ensure they align with evolving business needs and technological advancements.\n\nIn conclusion, while the current hardware inventory demonstrates a solid foundation for operational needs, strategic upgrades and optimizations will be crucial in maintaining competitiveness and ensuring resilience in the face of future challenges.",
-    "software_gap_analysis": "**Software Gap Analysis**\n\nIn the current landscape of IT transformation, a comprehensive software gap analysis is crucial for identifying discrepancies between existing software capabilities and the desired operational outcomes. Although specific data points are not provided in this analysis, the absence of detailed insights presents an opportunity to explore potential areas of improvement.\n\nA robust software gap analysis typically involves evaluating the functionality, performance, and integration capabilities of current software solutions against business requirements and industry benchmarks. Key areas to focus on include:\n\n1. **Functionality Assessment**: Determine whether existing software meets the core needs of stakeholders. This includes analyzing user feedback and identifying missing features that could enhance productivity.\n\n2. **Performance Metrics**: Evaluate the efficiency and speed of current software applications. Performance issues can hinder user adoption and operational efficiency, making it essential to identify and address these gaps.\n\n3. **Integration Capabilities**: Assess how well current software integrates with other systems and tools within the organization. Seamless integration is vital for data flow and operational coherence.\n\n4. **Scalability and Flexibility**: Consider whether existing software can scale with the business's growth and adapt to changing market conditions. This is particularly important in a rapidly evolving technological landscape.\n\n5. **Compliance and Security**: Ensure that software solutions adhere to industry regulations and security standards. Gaps in compliance can lead to significant risks for the organization.\n\nBy conducting a thorough software gap analysis, organizations can identify critical areas for improvement, prioritize investments in software development or acquisition, and ultimately enhance their IT transformation efforts. This strategic approach not only aligns technology with business objectives but also fosters innovation and competitive advantage in the marketplace.",
-    "market_benchmarking": "**Market Benchmarking Analysis**\n\nIn the current landscape of IT transformation, effective market benchmarking serves as a critical tool for organizations seeking to align their strategies with industry standards and best practices. However, the absence of specific data in our market benchmarking section highlights an opportunity for growth and insight. \n\nTo leverage market benchmarking effectively, organizations should focus on key performance indicators (KPIs) relevant to their sector, including technology adoption rates, cost efficiency, and customer satisfaction metrics. By gathering and analyzing data from competitors and industry leaders, businesses can identify gaps in their current capabilities and uncover areas for improvement.\n\nFurthermore, establishing a robust benchmarking framework will enable organizations to track their progress over time, ensuring that they remain competitive and responsive to market changes. As we move forward, it will be essential to populate this section with relevant data to facilitate informed decision-making and strategic planning. \n\nIn conclusion, while the current lack of data presents a challenge, it also opens the door for a comprehensive benchmarking initiative that can drive IT transformation and enhance overall organizational performance."
-  },
-  "charts": {
-    "hardware_insights_tier": "https://drive.google.com/file/d/15DUB06HKUECtdqLitKuo46aqbywtmIfI/view?usp=drivesdk",
-    "software_insights_tier": "https://drive.google.com/file/d/15nEnXvHTXHbNn9qUnxms3Nc9gFQhpcg9/view?usp=drivesdk"
-  },
-  "appendices": [
-    "Bank_Server_Inventory.xlsx",
-    "HWGapAnalysis.xlsx",
-    "Bank_Application_Inventory.xlsx",
-    "SWGapAnalysis.xlsx"
-  ]
-}
-10.214.84.29 - - [06/Jul/2025:03:03:36 +0000] "POST /generate_market_reports HTTP/1.1" 200 48 "-" "python-requests/2.31.0"
+import os
+import json
+import re
+import traceback
+import logging
+import requests
+from flask import Flask, request, jsonify
+from docxtpl import DocxTemplate
+from pptx import Presentation
+from pptx.util import Inches
+from drive_utils import upload_to_drive
+
+# Templates directory
+TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
+DOCX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.docx")
+PPTX_TEMPLATE = os.path.join(TEMPLATES_DIR, "Market_Gap_Analysis_Template.pptx")
+
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+
+
+def to_direct_drive_url(url: str) -> str:
+    """
+    Convert a Google Drive share URL into a direct-download URL.
+    """
+    m = re.search(r"[?&]id=([^&]+)", url)
+    if m:
+        file_id = m.group(1)
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    m = re.search(r"/d/([^/]+)", url)
+    if m:
+        file_id = m.group(1)
+        return f"https://drive.google.com/uc?export=download&id={file_id}"
+    return url
+
+
+def download_chart(url: str, local_path: str) -> str:
+    """
+    Download a chart PNG from Drive into local_path as a file.
+    """
+    direct_url = to_direct_drive_url(url)
+    os.makedirs(os.path.dirname(local_path), exist_ok=True)
+    resp = requests.get(direct_url)
+    resp.raise_for_status()
+    with open(local_path, "wb") as f:
+        f.write(resp.content)
+    return local_path
+
+
+def replace_placeholder(slide, key, text):
+    """
+    Replace {{ key }} placeholders across all shape types, including text boxes, placeholders, and content.
+    """
+    pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}")
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+        text_frame = shape.text_frame
+        for paragraph in text_frame.paragraphs:
+            if not paragraph.runs:
+                paragraph.text = pattern.sub(text, paragraph.text)
+            for run in paragraph.runs:
+                run.text = pattern.sub(text, run.text)
+
+def start_market_gap():
+    data = request.get_json(force=True)
+    logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
+
+    session_id = data.get("session_id")
+    if not session_id:
+        return jsonify({"error": "Missing session_id"}), 400
+
+    # Create local session folder
+    local_path = os.path.join("temp_sessions", session_id)
+    os.makedirs(local_path, exist_ok=True)
+
+    try:
+        result = generate_market_reports(
+            session_id=session_id,
+            email=data.get("email", ""),
+            folder_id=data.get("folder_id", ""),
+            payload=data,
+            local_path=local_path
+        )
+        next_webhook = data.get("next_action_webhook")
+        if next_webhook and result:
+            try:
+                requests.post(next_webhook, json=result, timeout=30)
+            except Exception:
+                pass
+        return jsonify(result), 200
+
+    except Exception as e:
+        logging.error(f"🔥 Market Reports generation failed: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+def generate_market_reports(session_id: str,
+                            email: str,
+                            folder_id: str,
+                            payload: dict,
+                            local_path: str) -> dict:
+    """
+    Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
+    """
+    try:
+        # 1. Generate DOCX report
+        doc = DocxTemplate(DOCX_TEMPLATE)
+        context = {}
+        # Fill in all content sections
+        context.update(payload.get("content", {}))
+        # Add metadata
+        context["date"] = payload.get("date", "")
+        context["organization_name"] = payload.get("organization_name", "")
+
+        docx_filename = f"market_gap_analysis_report_{session_id}.docx"
+        docx_path = os.path.join(local_path, docx_filename)
+        doc.render(context)
+        doc.save(docx_path)
+        docx_url = upload_to_drive(docx_path, session_id, folder_id)
+
+        # 2. Generate PPTX executive report
+        pres = Presentation(PPTX_TEMPLATE)
+        content = payload.get("content", {})
+        charts = payload.get("charts", {})
+
+        # Slide 1: Executive Summary
+        if len(pres.slides) > 1:
+            replace_placeholder(pres.slides[1], "executive_summary", content.get("executive_summary", ""))
+
+        # Slide 4–7: Main content
+        content_slide_map = {
+            4: "current_state_overview",
+            5: "hardware_gap_analysis",
+            6: "software_gap_analysis",
+            7: "market_benchmarking"
+        }
+
+        for slide_index, key in content_slide_map.items():
+            if len(pres.slides) > slide_index:
+                replace_placeholder(pres.slides[slide_index], key, content.get(key, ""))
+
+        # Optional: Add chart images to Slide 0 (Agenda)
+        chart_slide_index = 0
+        if len(pres.slides) > chart_slide_index:
+            hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
+            sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
+
+            if hw_url:
+                chart_local = os.path.join(local_path, "hardware_tier.png")
+                chart_path = download_chart(hw_url, chart_local)
+                if os.path.exists(chart_path):
+                    pres.slides[chart_slide_index].shapes.add_picture(
+                        chart_path,
+                        Inches(0.5), Inches(1.8),
+                        width=Inches(4), height=Inches(3)
+                    )
+            if sw_url:
+                chart_local = os.path.join(local_path, "software_tier.png")
+                chart_path = download_chart(sw_url, chart_local)
+                if os.path.exists(chart_path):
+                    pres.slides[chart_slide_index].shapes.add_picture(
+                        chart_path,
+                        Inches(5), Inches(1.8),
+                        width=Inches(4), height=Inches(3)
+                    )
+
+        # Save PPTX
+        pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
+        pptx_path = os.path.join(local_path, pptx_filename)
+        pres.save(pptx_path)
+        pptx_url = upload_to_drive(pptx_path, session_id, folder_id)
+
+        # 3. Construct result payload
+        result = {
+            "session_id": session_id,
+            "gpt_module": "gap_market",
+            "status": "complete",
+            "content": content,
+            "charts": charts,
+            "files": [
+                {"file_name": f["file_name"], "file_url": f["file_url"]}
+                for f in payload.get("files", [])
+            ],
+            "file_1_name": os.path.basename(docx_path),
+            "file_1_url": docx_url,
+            "file_2_name": os.path.basename(pptx_path),
+            "file_2_url": pptx_url
+        }
+
+        # 4. Downstream callback
+        next_webhook = payload.get("next_action_webhook") or (
+            os.getenv("IT_STRATEGY_API_URL", "") + "/start_it_strategy"
+        )
+        if next_webhook:
+            try:
+                requests.post(next_webhook, json=result, timeout=30)
+            except Exception:
+                pass
+
+        return result
+
+    except Exception as e:
+        logging.error(f"🔥 Market Reports generation failed: {e}")
+        traceback.print_exc()
+        return None
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
