@@ -123,54 +123,46 @@ def generate_market_reports(session_id: str,
         content = payload.get("content", {})
         charts = payload.get("charts", {})
 
-        # Slide 0: Executive Summary
-        replace_placeholder(pres.slides[0],
-                            "executive_summary",
-                            content.get("executive_summary", ""))
+        # Slide 1: Executive Summary
+        if len(pres.slides) > 1:
+            replace_placeholder(pres.slides[1], "executive_summary", content.get("executive_summary", ""))
 
-        # Slide 1: Hardware Tier Distribution Chart
-        slide = pres.slides[1]
-        hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
-        if hw_url:
-            chart_local = os.path.join(local_path, "hardware_tier.png")
-            chart_path = download_chart(hw_url, chart_local)
-            slide.shapes.add_picture(
-                chart_path,
-                Inches(1), Inches(1),
-                width=Inches(8), height=Inches(4.5)
-            )
+        # Slide 4–7: Main content
+        content_slide_map = {
+            4: "current_state_overview",
+            5: "hardware_gap_analysis",
+            6: "software_gap_analysis",
+            7: "market_benchmarking"
+        }
 
-        # Slide 2: Software Tier Distribution Chart
-        slide = pres.slides[2]
-        sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
-        if sw_url:
-            chart_local = os.path.join(local_path, "software_tier.png")
-            chart_path = download_chart(sw_url, chart_local)
-            slide.shapes.add_picture(
-                chart_path,
-                Inches(1), Inches(1),
-                width=Inches(8), height=Inches(4.5)
-            )
+        for slide_index, key in content_slide_map.items():
+            if len(pres.slides) > slide_index:
+                replace_placeholder(pres.slides[slide_index], key, content.get(key, ""))
 
-        # Slide 3: Current State Overview
-        replace_placeholder(pres.slides[3],
-                            "current_state_overview",
-                            content.get("current_state_overview", ""))
+        # Optional: Add chart images to Slide 0 (Agenda)
+        chart_slide_index = 0
+        if len(pres.slides) > chart_slide_index:
+            hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
+            sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
 
-        # Slide 4: Hardware Gap Analysis
-        replace_placeholder(pres.slides[4],
-                            "hardware_gap_analysis",
-                            content.get("hardware_gap_analysis", ""))
-
-        # Slide 5: Software Gap Analysis
-        replace_placeholder(pres.slides[5],
-                            "software_gap_analysis",
-                            content.get("software_gap_analysis", ""))
-
-        # Slide 6: Market Benchmarking
-        replace_placeholder(pres.slides[6],
-                            "market_benchmarking",
-                            content.get("market_benchmarking", ""))
+            if hw_url:
+                chart_local = os.path.join(local_path, "hardware_tier.png")
+                chart_path = download_chart(hw_url, chart_local)
+                if os.path.exists(chart_path):
+                    pres.slides[chart_slide_index].shapes.add_picture(
+                        chart_path,
+                        Inches(0.5), Inches(1.8),
+                        width=Inches(4), height=Inches(3)
+                    )
+            if sw_url:
+                chart_local = os.path.join(local_path, "software_tier.png")
+                chart_path = download_chart(sw_url, chart_local)
+                if os.path.exists(chart_path):
+                    pres.slides[chart_slide_index].shapes.add_picture(
+                        chart_path,
+                        Inches(5), Inches(1.8),
+                        width=Inches(4), height=Inches(3)
+                    )
 
         # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
