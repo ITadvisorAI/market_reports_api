@@ -114,16 +114,7 @@ def generate_market_reports(session_id: str,
 
     try:
         # 1. Generate DOCX
-        logging.info("🔄 Starting DOCX generation...")(session_id: str,
-                            email: str,
-                            folder_id: str,
-                            payload: dict,
-                            local_path: str) -> dict:
-    """
-    Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
-    """
-    try:
-        # 1. Generate DOCX
+        logging.info("🔄 Starting DOCX generation...")
         doc = DocxTemplate(DOCX_TEMPLATE)
         context = payload.get("content", {}).copy()
         context["date"] = payload.get("date", "")
@@ -138,6 +129,7 @@ def generate_market_reports(session_id: str,
         logging.info("✅ DOCX uploaded to %s", docx_url)
 
         # 2. Generate PPTX
+        logging.info("🔄 Starting PPTX generation...")
         pres = Presentation(PPTX_TEMPLATE)
         content = payload.get("content", {})
         charts = payload.get("charts", {})
