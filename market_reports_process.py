@@ -1,4 +1,3 @@
-
 import os
 import json
 import re
@@ -21,6 +20,9 @@ logging.basicConfig(level=logging.INFO)
 
 
 def to_direct_drive_url(url: str) -> str:
+    """
+    Convert a Google Drive share URL into a direct-download URL.
+    """
     m = re.search(r"[?&]id=([^&]+)", url)
     if m:
         file_id = m.group(1)
@@ -33,6 +35,9 @@ def to_direct_drive_url(url: str) -> str:
 
 
 def download_chart(url: str, local_path: str) -> str:
+    """
+    Download a chart PNG from Drive into local_path as a file.
+    """
     direct_url = to_direct_drive_url(url)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
     resp = requests.get(direct_url)
@@ -42,15 +47,30 @@ def download_chart(url: str, local_path: str) -> str:
     return local_path
 
 
-@app.route("/generate_market_reports", methods=["POST"])
-def generate_market_reports_api():
+def replace_placeholder(slide, key, text):
+    """
+    Replace {{ key }} placeholders across all shape types, including text boxes, placeholders, and content.
+    """
+    pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}")
+    for shape in slide.shapes:
+        if not shape.has_text_frame:
+            continue
+        text_frame = shape.text_frame
+        for paragraph in text_frame.paragraphs:
+            if not paragraph.runs:
+                paragraph.text = pattern.sub(text, paragraph.text)
+            for run in paragraph.runs:
+                run.text = pattern.sub(text, run.text)
+
+def start_market_gap():
     data = request.get_json(force=True)
-    logging.info("📦 Incoming payload for market reports:\n%s", json.dumps(data, indent=2))
+    logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
     session_id = data.get("session_id")
     if not session_id:
         return jsonify({"error": "Missing session_id"}), 400
 
+    # Create local session folder
     local_path = os.path.join("temp_sessions", session_id)
     os.makedirs(local_path, exist_ok=True)
 
@@ -62,7 +82,14 @@ def generate_market_reports_api():
             payload=data,
             local_path=local_path
         )
+        next_webhook = data.get("next_action_webhook")
+        if next_webhook and result:
+            try:
+                requests.post(next_webhook, json=result, timeout=30)
+            except Exception:
+                pass
         return jsonify(result), 200
+
     except Exception as e:
         logging.error(f"🔥 Market Reports generation failed: {e}")
         traceback.print_exc()
@@ -74,74 +101,108 @@ def generate_market_reports(session_id: str,
                             folder_id: str,
                             payload: dict,
                             local_path: str) -> dict:
-    doc = DocxTemplate(DOCX_TEMPLATE)
-    context = payload.get("content", {})
-    context["date"] = payload.get("date", "")
-    context["organization_name"] = payload.get("organization_name", "")
+    """
+    Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
+    """
+    try:
+        # 1. Generate DOCX report
+        doc = DocxTemplate(DOCX_TEMPLATE)
+        context = {}
+        # Fill in all content sections
+        context.update(payload.get("content", {}))
+        # Add metadata
+        context["date"] = payload.get("date", "")
+        context["organization_name"] = payload.get("organization_name", "")
 
-    docx_path = os.path.join(local_path, f"market_gap_analysis_report_{session_id}.docx")
-    doc.render(context)
-    doc.save(docx_path)
-    docx_url = upload_to_drive(docx_path, session_id, folder_id)
+        docx_filename = f"market_gap_analysis_report_{session_id}.docx"
+        docx_path = os.path.join(local_path, docx_filename)
+        doc.render(context)
+        doc.save(docx_path)
+        docx_url = upload_to_drive(docx_path, session_id, folder_id)
 
-    pres = Presentation(PPTX_TEMPLATE)
-    content = payload.get("content", {})
-    charts = payload.get("charts", {})
+        # 2. Generate PPTX executive report
+        pres = Presentation(PPTX_TEMPLATE)
+        content = payload.get("content", {})
+        charts = payload.get("charts", {})
 
-    if len(pres.slides) > 1:
-        try:
-            pres.slides[1].placeholders[1].text = content.get("executive_summary", "")
-        except Exception:
-            pass
+        # Slide 1: Executive Summary
+        # Slide 2–6: Main content
+        content_slide_map = {
+            2: "executive_summary",
+            3: "current_state_overview",
+            4: "hardware_gap_analysis",
+            5: "software_gap_analysis",
+            6: "market_benchmarking"
+        }
 
-    slide_text_map = {
-        4: "current_state_overview",
-        5: "hardware_gap_analysis",
-        6: "software_gap_analysis",
-        7: "market_benchmarking"
-    }
-    for slide_index, key in slide_text_map.items():
-        try:
+        for slide_index, key in content_slide_map.items():
             if len(pres.slides) > slide_index:
-                pres.slides[slide_index].placeholders[1].text = content.get(key, "")
-        except Exception:
-            pass
+                replace_placeholder(pres.slides[slide_index], key, content.get(key, ""))
 
-    chart_slide_index = 0
-    if len(pres.slides) > chart_slide_index:
-        hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
-        sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
+        # Optional: Add chart images to Slide 0 (Agenda)
+        chart_slide_index = 0
+        if len(pres.slides) > chart_slide_index:
+            hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
+            sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
 
-        if hw_url:
-            chart_local = os.path.join(local_path, "hardware_tier.png")
-            chart_path = download_chart(hw_url, chart_local)
-            if os.path.exists(chart_path):
-                pres.slides[chart_slide_index].shapes.add_picture(chart_path, Inches(0.5), Inches(1.8), width=Inches(4), height=Inches(3))
-        if sw_url:
-            chart_local = os.path.join(local_path, "software_tier.png")
-            chart_path = download_chart(sw_url, chart_local)
-            if os.path.exists(chart_path):
-                pres.slides[chart_slide_index].shapes.add_picture(chart_path, Inches(5), Inches(1.8), width=Inches(4), height=Inches(3))
+            if hw_url:
+                chart_local = os.path.join(local_path, "hardware_tier.png")
+                chart_path = download_chart(hw_url, chart_local)
+                if os.path.exists(chart_path):
+                    pres.slides[chart_slide_index].shapes.add_picture(
+                        chart_path,
+                        Inches(0.5), Inches(1.8),
+                        width=Inches(4), height=Inches(3)
+                    )
+            if sw_url:
+                chart_local = os.path.join(local_path, "software_tier.png")
+                chart_path = download_chart(sw_url, chart_local)
+                if os.path.exists(chart_path):
+                    pres.slides[chart_slide_index].shapes.add_picture(
+                        chart_path,
+                        Inches(5), Inches(1.8),
+                        width=Inches(4), height=Inches(3)
+                    )
 
-    pptx_path = os.path.join(local_path, f"market_gap_analysis_executive_report_{session_id}.pptx")
-    pres.save(pptx_path)
-    pptx_url = upload_to_drive(pptx_path, session_id, folder_id)
+        # Save PPTX
+        pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
+        pptx_path = os.path.join(local_path, pptx_filename)
+        pres.save(pptx_path)
+        pptx_url = upload_to_drive(pptx_path, session_id, folder_id)
 
-    return {
-        "session_id": session_id,
-        "gpt_module": "gap_market",
-        "status": "complete",
-        "content": content,
-        "charts": charts,
-        "files": [
-            {"file_name": f["file_name"], "file_url": f["file_url"]}
-            for f in payload.get("files", [])
-        ],
-        "file_1_name": os.path.basename(docx_path),
-        "file_1_url": docx_url,
-        "file_2_name": os.path.basename(pptx_path),
-        "file_2_url": pptx_url
-    }
+        # 3. Construct result payload
+        result = {
+            "session_id": session_id,
+            "gpt_module": "gap_market",
+            "status": "complete",
+            "content": content,
+            "charts": charts,
+            "files": [
+                {"file_name": f["file_name"], "file_url": f["file_url"]}
+                for f in payload.get("files", [])
+            ],
+            "file_1_name": os.path.basename(docx_path),
+            "file_1_url": docx_url,
+            "file_2_name": os.path.basename(pptx_path),
+            "file_2_url": pptx_url
+        }
+
+        # 4. Downstream callback
+        next_webhook = payload.get("next_action_webhook") or (
+            os.getenv("IT_STRATEGY_API_URL", "") + "/start_it_strategy"
+        )
+        if next_webhook:
+            try:
+                requests.post(next_webhook, json=result, timeout=30)
+            except Exception:
+                pass
+
+        return result
+
+    except Exception as e:
+        logging.error(f"🔥 Market Reports generation failed: {e}")
+        traceback.print_exc()
+        return None
 
 
 if __name__ == "__main__":
