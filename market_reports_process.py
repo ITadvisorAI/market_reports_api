@@ -7,11 +7,8 @@ import requests
 from flask import Flask, request, jsonify
 from docxtpl import DocxTemplate
 from pptx import Presentation
-from pptx.util import Inches, Pt
+from pptx.util import Inches
 from drive_utils import upload_to_drive
-
-# Ensure staging directory exists
-os.makedirs("temp_sessions", exist_ok=True)
 
 # Templates directory
 TEMPLATES_DIR = os.path.join(os.path.dirname(__file__), "templates")
@@ -39,7 +36,7 @@ def to_direct_drive_url(url: str) -> str:
 
 def download_chart(url: str, local_path: str) -> str:
     """
-    Download a chart PNG from Drive into local_path.
+    Download a chart PNG from Drive into local_path as a file.
     """
     direct_url = to_direct_drive_url(url)
     os.makedirs(os.path.dirname(local_path), exist_ok=True)
@@ -47,90 +44,51 @@ def download_chart(url: str, local_path: str) -> str:
     resp.raise_for_status()
     with open(local_path, "wb") as f:
         f.write(resp.content)
-    logging.info(f"✅ Downloaded chart to %s", local_path)
     return local_path
 
 
 def replace_placeholder(slide, key, text):
     """
-    Replace any {{ key }} tags in text frames of the slide.
+    Replace ANY {{ key }} tag in all text frames of the slide.
     """
     pattern = re.compile(r"\{\{\s*" + re.escape(key) + r"\s*\}\}")
     for shape in slide.shapes:
         if shape.has_text_frame:
-            for paragraph in shape.text_frame.paragraphs:
-                if pattern.search(paragraph.text):
-                    paragraph.text = pattern.sub(text, paragraph.text)
-                    logging.info(f"✅ Replaced placeholder %s on slide", key)
+            new_txt = pattern.sub(text, shape.text)
+            if new_txt != shape.text:
+                shape.text = new_txt
 
-@app.route("/generate_market_reports", methods=["POST"])
-"
-"def start_market_gap():
-"
-"    data = request.get_json(force=True)
-"
-"    logging.info("📦 Incoming payload for market reports:
-%s", json.dumps(data, indent=2))
 
-"
-"    session_id = data.get("session_id")
-"
-"    folder_id = data.get("folder_id")
-"
-"    if not folder_id:
-"
-"        logging.error("❌ Missing folder_id")
-"
-"        return jsonify({"error": "Missing folder_id"}), 400
-"
-"    if not session_id:
-"
-"        logging.error("❌ Missing session_id")
-"
-"        return jsonify({"error": "Missing session_id"}), 400
+@app.route("/start_market_gap", methods=["POST"])
+def start_market_gap():
+    data = request.get_json(force=True)
+    logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
 
-"
-"    # Create local session folder
-"
-"    local_path = os.path.join("temp_sessions", session_id)
-"
-"    os.makedirs(local_path, exist_ok=True)
+    session_id = data.get("session_id")
+    if not session_id:
+        return jsonify({"error": "Missing session_id"}), 400
 
-"
-"    try:
-"
-"        result = generate_market_reports(
-"
-"            session_id=session_id,
-"
-"            email=data.get("organization_name", ""),
-"
-"            folder_id=folder_id,
-"
-"            payload=data,
-"
-"            local_path=local_path
-"
-"        )
-"
-"        if not result:
-"
-"            logging.error("❌ generate_market_reports returned no result")
-"
-"            return jsonify({"error": "Report generation failed"}), 500
-"
-"        logging.info("✅ Completed market reports for %s", session_id)
-"
-"        return jsonify(result), 200
+    # Create local session folder
+    local_path = os.path.join("temp_sessions", session_id)
+    os.makedirs(local_path, exist_ok=True)
 
-"
-"    except Exception as e:
-"
-"        logging.error(f"🔥 Market Reports generation failed: {e}")
-"
-"        traceback.print_exc()
-"
-"        return jsonify({"error": str(e)}), 500
+    try:
+        result = generate_market_reports(
+            session_id=session_id,
+            email=data.get("email", ""),
+            folder_id=data.get("folder_id", ""),
+            payload=data,
+            local_path=local_path
+        )
+        next_webhook = data.get("next_action_webhook")
+        if next_webhook and result:
+            try:
+                requests.post(next_webhook, json=result, timeout=30)
+            except Exception:
+                pass
+        return jsonify(result), 200
+
+    except Exception as e:
         logging.error(f"🔥 Market Reports generation failed: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -144,86 +102,116 @@ def generate_market_reports(session_id: str,
     """
     Renders DOCX and PPTX using templates, uploads to Drive, and constructs result.
     """
-    # Verify template files exist
-    logging.info(f"Using DOCX template: {DOCX_TEMPLATE}")
-    if not os.path.exists(DOCX_TEMPLATE):
-        raise FileNotFoundError(f"DOCX template not found at {DOCX_TEMPLATE}")
-    logging.info(f"Using PPTX template: {PPTX_TEMPLATE}")
-    if not os.path.exists(PPTX_TEMPLATE):
-        raise FileNotFoundError(f"PPTX template not found at {PPTX_TEMPLATE}")
-
     try:
-        # 1. Generate DOCX
-        logging.info("🔄 Starting DOCX generation...")
+        # 1. Generate DOCX report
         doc = DocxTemplate(DOCX_TEMPLATE)
-        context = payload.get("content", {}).copy()
+        context = {}
+        # Fill in all content sections
+        context.update(payload.get("content", {}))
+        # Add metadata
         context["date"] = payload.get("date", "")
-        context["organization_name"] = email
+        context["organization_name"] = payload.get("organization_name", "")
 
         docx_filename = f"market_gap_analysis_report_{session_id}.docx"
         docx_path = os.path.join(local_path, docx_filename)
         doc.render(context)
         doc.save(docx_path)
-        logging.info("✅ DOCX saved to %s", docx_path)
-        docx_url = upload_to_drive(docx_path, folder_id)
-        logging.info("✅ DOCX uploaded to %s", docx_url)
+        docx_url = upload_to_drive(docx_path, session_id, folder_id)
 
-        # 2. Generate PPTX
-        logging.info("🔄 Starting PPTX generation...")
+        # 2. Generate PPTX executive report
         pres = Presentation(PPTX_TEMPLATE)
         content = payload.get("content", {})
         charts = payload.get("charts", {})
 
-        # Populate all placeholders on template slides
-        for key, text in content.items():
-            for slide in pres.slides:
-                replace_placeholder(slide, key, text)
+        # Slide 0: Executive Summary
+        replace_placeholder(pres.slides[0],
+                            "executive_summary",
+                            content.get("executive_summary", ""))
 
-        # Insert charts for slides 1 and 2
-        hw_url = charts.get("hardware_insights_tier")
+        # Slide 1: Hardware Tier Distribution Chart
+        slide = pres.slides[1]
+        hw_url = charts.get("hardware_tier_distribution") or charts.get("hardware_insights_tier")
         if hw_url:
             chart_local = os.path.join(local_path, "hardware_tier.png")
             chart_path = download_chart(hw_url, chart_local)
-            pres.slides[1].shapes.add_picture(
-                chart_path, Inches(1), Inches(1), width=Inches(8), height=Inches(4.5)
+            slide.shapes.add_picture(
+                chart_path,
+                Inches(1), Inches(1),
+                width=Inches(8), height=Inches(4.5)
             )
-            logging.info("✅ Hardware chart inserted on slide 1")
 
-        sw_url = charts.get("software_insights_tier")
+        # Slide 2: Software Tier Distribution Chart
+        slide = pres.slides[2]
+        sw_url = charts.get("software_tier_distribution") or charts.get("software_insights_tier")
         if sw_url:
             chart_local = os.path.join(local_path, "software_tier.png")
             chart_path = download_chart(sw_url, chart_local)
-            pres.slides[2].shapes.add_picture(
-                chart_path, Inches(1), Inches(1), width=Inches(8), height=Inches(4.5)
+            slide.shapes.add_picture(
+                chart_path,
+                Inches(1), Inches(1),
+                width=Inches(8), height=Inches(4.5)
             )
-            logging.info("✅ Software chart inserted on slide 2")
+
+        # Slide 3: Current State Overview
+        replace_placeholder(pres.slides[3],
+                            "current_state_overview",
+                            content.get("current_state_overview", ""))
+
+        # Slide 4: Hardware Gap Analysis
+        replace_placeholder(pres.slides[4],
+                            "hardware_gap_analysis",
+                            content.get("hardware_gap_analysis", ""))
+
+        # Slide 5: Software Gap Analysis
+        replace_placeholder(pres.slides[5],
+                            "software_gap_analysis",
+                            content.get("software_gap_analysis", ""))
+
+        # Slide 6: Market Benchmarking
+        replace_placeholder(pres.slides[6],
+                            "market_benchmarking",
+                            content.get("market_benchmarking", ""))
 
         # Save PPTX
         pptx_filename = f"market_gap_analysis_executive_report_{session_id}.pptx"
         pptx_path = os.path.join(local_path, pptx_filename)
         pres.save(pptx_path)
-        logging.info("✅ PPTX saved to %s", pptx_path)
-        pptx_url = upload_to_drive(pptx_path, folder_id)
-        logging.info("✅ PPTX uploaded to %s", pptx_url)
+        pptx_url = upload_to_drive(pptx_path, session_id, folder_id)
 
-        # 3. Construct result
+        # 3. Construct result payload
         result = {
             "session_id": session_id,
+            "gpt_module": "gap_market",
             "status": "complete",
             "content": content,
             "charts": charts,
-            "report_urls": [docx_url, pptx_url],
+            "files": [
+                {"file_name": f["file_name"], "file_url": f["file_url"]}
+                for f in payload.get("files", [])
+            ],
             "file_1_name": os.path.basename(docx_path),
             "file_1_url": docx_url,
             "file_2_name": os.path.basename(pptx_path),
             "file_2_url": pptx_url
         }
+
+        # 4. Downstream callback
+        next_webhook = payload.get("next_action_webhook") or (
+            os.getenv("IT_STRATEGY_API_URL", "") + "/start_it_strategy"
+        )
+        if next_webhook:
+            try:
+                requests.post(next_webhook, json=result, timeout=30)
+            except Exception:
+                pass
+
         return result
 
     except Exception as e:
-        logging.error(f"🔥 Error in generate_market_reports: {e}")
+        logging.error(f"🔥 Market Reports generation failed: {e}")
         traceback.print_exc()
         return None
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
