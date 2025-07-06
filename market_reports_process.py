@@ -19,6 +19,22 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 
 
+
+from pptx.util import Inches
+from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+def insert_chart_into_slide(slide, chart_path, left=Inches(5.5), top=Inches(2), width=Inches(4), height=Inches(3)):
+    slide.shapes.add_picture(chart_path, left, top, width, height)
+
+def place_charts(presentation, chart_paths_dict):
+    for slide in presentation.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                text = shape.text_frame.text.strip().lower()
+                if "hardware tier distribution" in text and "hardware_insights_tier" in chart_paths_dict:
+                    insert_chart_into_slide(slide, chart_paths_dict["hardware_insights_tier"])
+                elif "software tier distribution" in text and "software_insights_tier" in chart_paths_dict:
+                    insert_chart_into_slide(slide, chart_paths_dict["software_insights_tier"])
 def to_direct_drive_url(url: str) -> str:
     """
     Convert a Google Drive share URL into a direct-download URL.
