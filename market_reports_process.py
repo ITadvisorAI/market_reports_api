@@ -64,33 +64,73 @@ def replace_placeholder(slide, key, text):
                     logging.info(f"✅ Replaced placeholder %s on slide", key)
 
 @app.route("/generate_market_reports", methods=["POST"])
-def start_market_gap():
-    data = request.get_json(force=True)
-    logging.info("📦 Incoming payload for market reports:\n%s", json.dumps(data, indent=2))
+"
+"def start_market_gap():
+"
+"    data = request.get_json(force=True)
+"
+"    logging.info("📦 Incoming payload for market reports:
+%s", json.dumps(data, indent=2))
 
-    session_id = data.get("session_id")
-    if not session_id:
-        return jsonify({"error": "Missing session_id"}), 400
+"
+"    session_id = data.get("session_id")
+"
+"    folder_id = data.get("folder_id")
+"
+"    if not folder_id:
+"
+"        logging.error("❌ Missing folder_id")
+"
+"        return jsonify({"error": "Missing folder_id"}), 400
+"
+"    if not session_id:
+"
+"        logging.error("❌ Missing session_id")
+"
+"        return jsonify({"error": "Missing session_id"}), 400
 
-    # Create local session folder
-    local_path = os.path.join("temp_sessions", session_id)
-    os.makedirs(local_path, exist_ok=True)
+"
+"    # Create local session folder
+"
+"    local_path = os.path.join("temp_sessions", session_id)
+"
+"    os.makedirs(local_path, exist_ok=True)
 
-    try:
-        result = generate_market_reports(
-            session_id=session_id,
-            email=data.get("organization_name", ""),
-            folder_id=data.get("folder_id", ""),
-            payload=data,
-            local_path=local_path
-        )
-        if not result:
-            logging.error("❌ generate_market_reports returned no result")
-            return jsonify({"error": "Report generation failed"}), 500
-        logging.info("✅ Completed market reports for %s", session_id)
-        return jsonify(result), 200
+"
+"    try:
+"
+"        result = generate_market_reports(
+"
+"            session_id=session_id,
+"
+"            email=data.get("organization_name", ""),
+"
+"            folder_id=folder_id,
+"
+"            payload=data,
+"
+"            local_path=local_path
+"
+"        )
+"
+"        if not result:
+"
+"            logging.error("❌ generate_market_reports returned no result")
+"
+"            return jsonify({"error": "Report generation failed"}), 500
+"
+"        logging.info("✅ Completed market reports for %s", session_id)
+"
+"        return jsonify(result), 200
 
-    except Exception as e:
+"
+"    except Exception as e:
+"
+"        logging.error(f"🔥 Market Reports generation failed: {e}")
+"
+"        traceback.print_exc()
+"
+"        return jsonify({"error": str(e)}), 500
         logging.error(f"🔥 Market Reports generation failed: {e}")
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
