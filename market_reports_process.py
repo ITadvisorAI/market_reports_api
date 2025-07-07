@@ -102,7 +102,7 @@ def start_market_gap():
         return jsonify({"error": str(e)}), 500
 
 
- def generate_market_reports(session_id: str,
+def generate_market_reports(session_id: str,
                             email: str,
                             folder_id: str,
                             payload: dict,
