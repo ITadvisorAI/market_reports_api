@@ -95,7 +95,7 @@ def generate_market_reports(session_id: str,
             pass
 
     slide_text_map = {
-        2: "executive_summary"
+        2: "executive_summary",
         3: "current_state_overview",
         4: "hardware_gap_analysis",
         5: "software_gap_analysis",
