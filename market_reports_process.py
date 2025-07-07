@@ -88,12 +88,13 @@ def start_market_gap():
             payload=data,
             local_path=local_path
         )
-        next_webhook = data.get("next_action_webhook")
-        if next_webhook and result:
-            try:
-                requests.post(next_webhook, json=result, timeout=30)
-            except Exception:
-                pass
+        # Invoke IT Summarizer endpoint
+        summarizer_url = "https://it-summarizer-api.onrender.com"
+        try:
+            requests.post(summarizer_url, json=result, timeout=30)
+        except Exception:
+            pass
+
         return jsonify(result), 200
     except Exception as e:
         logging.error(f"🔥 Market Reports generation failed: {e}")
@@ -101,7 +102,7 @@ def start_market_gap():
         return jsonify({"error": str(e)}), 500
 
 
-def generate_market_reports(session_id: str,
+ def generate_market_reports(session_id: str,
                             email: str,
                             folder_id: str,
                             payload: dict,
@@ -140,10 +141,8 @@ def generate_market_reports(session_id: str,
 
     # Insert charts into named picture placeholders
     chart_placeholders = {
-        "hardware_status": charts.get("hardware_status"),
-        "hardware_tier": charts.get("hardware_tier"),
-        "software_status": charts.get("software_status"),
-        "software_tier": charts.get("software_tier"),
+        "hardware_tier": charts.get("hardware_insights_tier"),
+        "software_tier": charts.get("software_insights_tier"),
     }
     for slide in pres.slides:
         for ph_name, chart_url in chart_placeholders.items():
@@ -173,14 +172,6 @@ def generate_market_reports(session_id: str,
         "file_2_name": os.path.basename(pptx_path),
         "file_2_url": pptx_url
     }
-
-    # 4. Downstream callback remains unchanged
-    next_webhook = payload.get("next_action_webhook") or (os.getenv("IT_STRATEGY_API_URL", "") + "/start_it_strategy")
-    if next_webhook:
-        try:
-            requests.post(next_webhook, json=result, timeout=30)
-        except Exception:
-            pass
 
     return result
 
