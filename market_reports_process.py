@@ -88,20 +88,7 @@ def start_market_gap():
             payload=data,
             local_path=local_path
         )
-        # Invoke IT Summarizer endpoint
-        summarizer_url = "https://it-summarizer-api.onrender.com"
-        try:
-            requests.post(summarizer_url, json=result, timeout=30)
-        except Exception:
-            pass
-
-        return jsonify(result), 200
-    except Exception as e:
-        logging.error(f"🔥 Market Reports generation failed: {e}")
-        traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
-
-
+        
 def generate_market_reports(session_id: str,
                             email: str,
                             folder_id: str,
@@ -175,6 +162,18 @@ def generate_market_reports(session_id: str,
 
     return result
 
+    # Invoke IT Summarizer endpoint
+        summarizer_url = "https://it-summarizer-api.onrender.com"
+        try:
+            requests.post(summarizer_url, json=result, timeout=30)
+        except Exception:
+            pass
+
+        return jsonify(result), 200
+    except Exception as e:
+        logging.error(f"🔥 Market Reports generation failed: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
