@@ -69,18 +69,13 @@ def replace_placeholder(slide, key: str, text: str):
 @app.route('/start_market_gap', methods=['POST'])
 def start_market_gap():
     data = request.get_json(force=True)
-    logging.info("📦 Incoming payload:\n%s", json.dumps(data, indent=2))
-
-    session_id = data.get("session_id")
-    email = data.get("email", "")
-    folder_id = data.get("folder_id", "")
-    if not session_id:
-        return jsonify({"error": "Missing session_id"}), 400
+    # … extract session_id, email, folder_id, etc.
 
     local_path = os.path.join("temp_sessions", session_id)
     os.makedirs(local_path, exist_ok=True)
 
     try:
+        # 1) Generate your reports
         result = generate_market_reports(
             session_id=session_id,
             email=email,
@@ -88,6 +83,21 @@ def start_market_gap():
             payload=data,
             local_path=local_path
         )
+
+        # 2) Trigger the summarizer
+        summarizer_url = os.getenv("SUMMARIZER_URL",
+                                   "https://it-summarizer-api.onrender.com/start_summarizer")
+        logging.info(f"▶️  Calling summarizer at {summarizer_url}")
+        resp = requests.post(summarizer_url, json=result, timeout=30)
+        resp.raise_for_status()
+        logging.info("✅  Summarizer triggered")
+
+        # 3) Return the market reports result
+        return jsonify(result), 200
+
+    except Exception as e:
+        logging.error(f"🔥 Market Reports generation failed: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
         
 def generate_market_reports(session_id: str,
                             email: str,
