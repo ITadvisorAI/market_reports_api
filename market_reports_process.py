@@ -89,7 +89,7 @@ def start_market_gap():
             local_path=local_path
         )
         # Invoke IT Summarizer endpoint
-        summarizer_url = "https://it-summarizer-api.onrender.com/start_summarizer"
+        summarizer_url = "https://it-summarizer-api.onrender.com"
         try:
             requests.post(summarizer_url, json=result, timeout=30)
         except Exception:
